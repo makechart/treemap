@@ -158,8 +158,8 @@ mod = ({root, context, t}) ->
     @layout.update false
     @hierarchy.sum -> it.area or 0
     box = @layout.get-box \view
-    if !@hierarchy.children.length => delete @hierarchy.children
-    @hierarchy.children.push {data: {}}
+    if !(@hierarchy.children or []).length => delete @hierarchy.children
+    @hierarchy.[]children.push {data: {}}
     tree = d3.treemap!
       .padding (n) ~> if n.depth >= (@cat.depth - @cat.cur-depth) => 1 else 0
       .size([box.width, box.height])
