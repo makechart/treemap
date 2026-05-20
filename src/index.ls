@@ -1,6 +1,6 @@
 module.exports =
   pkg:
-    name: 'treemap', version: '0.0.1'
+    name: '@makechart/treemap', version: '0.0.2'
     extend: {name: "@makechart/base"}
     dependencies: []
     i18n:
@@ -141,6 +141,7 @@ mod = ({root, context, t}) ->
       @hierarchy.children = @hierarchy.children.filter ~> @legend.is-selected it.data.id
 
   resize: ->
+    if !@hierarchy => return
     @fmt = chart.utils.format.from @cfg.label.format
     @root.querySelector('.pdl-layout').classList.toggle \legend-bottom, @cfg.{}legend.position == \bottom
     @tip.toggle(if @cfg.{}tip.enabled? => @cfg.tip.enabled else true)
