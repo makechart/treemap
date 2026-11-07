@@ -1,8 +1,12 @@
 module.exports =
   pkg:
     name: '@makechart/treemap', version: '0.0.2'
-    extend: {name: "@makechart/base"}
-    dependencies: []
+    # lite: 不帶 d3 的 base. 補間改用 chart.anim, 可以逐格錄影 ( 見 @plotdb/chart utils/anim )
+    extend: {name: "@makechart/base", path: "lite/index.html"}
+    # stratify / treemap 用 d3-hierarchy ( 不需要 d3 core )
+    dependencies: [
+    * name: \d3-hierarchy, version: "3.1.2", path: "dist/d3-hierarchy.min.js", async: false
+    ]
     i18n:
       "zh-TW":
         "other": "其它"
@@ -12,6 +16,7 @@ module.exports =
 
 mod = ({root, context, t}) ->
   {chart,d3,ldcolor,wrap-svg-text} = context
+  {anim: {join}} = chart.utils
   sample: ->
     raw: [0 to 50].map (val) ~>
       val: (Math.random!)toFixed(2)
@@ -40,7 +45,7 @@ mod = ({root, context, t}) ->
     category: {type: \C, name: "分類", priority: 3, multiple: true}
   init: ->
     @tint = tint = new chart.utils.tint!
-    @g = Object.fromEntries <[view unit legend]>.map ~> [it, d3.select(@layout.get-group it)]
+    @g = Object.fromEntries <[view unit legend]>.map ~> [it, @layout.get-group it]
     @text-renderer = text-renderer = document.createElement \div
     text-renderer.style <<< do
       textAlign: \right
@@ -61,14 +66,14 @@ mod = ({root, context, t}) ->
       layout: @layout
       name: \legend
       root: @root
-      shape: (d) -> d3.select(@).attr \fill, tint.get d.key
+      shape: (d) -> @setAttribute \fill, tint.get d.key
       direction: if @cfg.{}legend.position == \bottom => \horizontal else \vertical
       cfg: selectable: true
     @legend.on \select, ~> @bind!; @resize!; @render!
     @tip = new chart.utils.tip {
       root: @root
       accessor: ({evt}) ~>
-        if !(evt.target and data = d3.select(evt.target).datum!) => return null
+        if !(evt.target and data = evt.target.__data__) => return null
         v = if isNaN(data.data.area) => '-' else "#{@fmt data.data.area}#{@binding.area.unit or ''}"
         return {name: data.data.name, value: v}
       range: ~> @layout.get-node \view .getBoundingClientRect!
@@ -167,7 +172,9 @@ mod = ({root, context, t}) ->
       .tile(d3.treemapBinary) @hierarchy
     @nodes = @hierarchy.leaves!filter -> it.data._raw
     @nodes.map -> it._raw = it.data._raw
-    @extent = d3.extent @nodes.map -> it.value
+    # 同 d3.extent: 略過 null / NaN
+    vs = @nodes.map(-> it.value).filter -> it? and it >= it
+    @extent = if vs.length => [Math.min.apply(Math, vs), Math.max.apply(Math, vs)] else [undefined, undefined]
   render: ->
     {cfg, unit, binding, layout, text-renderer, tint, fmt} = @
     tint.set cfg.palette
@@ -181,43 +188,40 @@ mod = ({root, context, t}) ->
       # else [(it.data.catobj[0] or {}).id, (it.data.catobj[@cat.cur-depth + 1] or {}).variant]
       ret
 
-    @g.unit.call ~>
-      node = layout.get-node \unit
-      ret = wrap-svg-text {node, useRange: true}
-      @g.unit.node!textContent = ''
-      @g.unit.node!appendChild ret
-    sel = @g.view.selectAll \rect.data .data(@nodes, -> it.data._idx)
-    sel.exit!
-      .attr \class, 'data exit'
-      .transition(\remove-rect).duration 275
-      .attr \x, (d,i) -> (d.x0 + d.x1)/2
-      .attr \y, (d,i) -> (d.y0 + d.y1)/2
-      .attr \width, 0
-      .attr \height, 0
-      .attr \opacity, 0
-      .remove!
+    node = layout.get-node \unit
+    ret = wrap-svg-text {node, useRange: true}
+    @g.unit.textContent = ''
+    @g.unit.appendChild ret
 
+    tween = (n, attrs, opt = {}) ~> @anim.tween n, attrs, {duration: 350} <<< opt
+    key = -> it.data._idx
     ctx = @
-    sel.enter!append \rect
-      .attr \class, 'data enter'
-      .attr \x, -> (it.x1 + it.x0)/2
-      .attr \y, -> (it.y1 + it.y0)/2
-      .attr \width, -> 0
-      .attr \height, -> 0
-      .attr \fill, ~> tint.get.apply tint, get-fill(it)
-      .style \opacity, 0
-      .on \dblclick, (evt) ->
+
+    rj = join root: @g.view, tag: \rect, cls: \data, data: @nodes, key: key
+    rj.exit.map (n) ->
+      d = n.__data__
+      n.setAttribute \class, 'data exit'
+      tween n, {x: (d.x0 + d.x1)/2, y: (d.y0 + d.y1)/2, width: 0, height: 0, opacity: 0}, {duration: 275, remove: true}
+    rj.enter.map (n) ->
+      d = n.__data__
+      n.setAttribute \x, (d.x1 + d.x0)/2
+      n.setAttribute \y, (d.y1 + d.y0)/2
+      n.setAttribute \width, 0
+      n.setAttribute \height, 0
+      n.setAttribute \fill, tint.get.apply tint, get-fill(d)
+      n.style.opacity = 0
+      n.addEventListener \dblclick, (evt) ->
         if !(cfg.zoom or {}).enabled => return
         if ctx.zoomhdr => clearTimeout ctx.zoomhdr
         ctx.cat.active = \root
         ctx.bind!
         ctx.resize!
         ctx.render!
-      .on \click, (evt) ->
+      n.addEventListener \click, (evt) ->
         if !(cfg.zoom or {}).enabled => return
         if ctx.zoomhdr => clearTimeout ctx.zoomhdr
         ctx.zoomhdr = setTimeout (~>
-          d = d3.select(@).datum!
+          d = n.__data__
           if !(catobj = d.data.catobj[ctx.cat.cur-depth]) => return
           ctx.cat.active = catobj.id
           ctx.bind!
@@ -225,57 +229,52 @@ mod = ({root, context, t}) ->
           ctx.render!
         ), 350
         evt.stopPropagation!
+    # 移除到一半又回來的: 停掉移除, 從目前的樣子補到新位置 ( 同 d3 的 interrupt \remove-rect )
+    rj.update.map (n) ~> @anim.interrupt n
+    rj.nodes.map (n) ->
+      d = n.__data__
+      n.setAttribute \class, 'data enter'
+      tween n, do
+        x: d.x0
+        y: d.y0
+        width: d.x1 - d.x0
+        height: d.y1 - d.y0
+        fill: tint.get.apply tint, get-fill(d)
+        "style:opacity": 1
 
-    sel.interrupt \remove-rect .attr \class, "data enter"
-    @g.view.selectAll \rect.data.enter
-      .transition(\update-rect).duration 350
-      .attr \x, -> it.x0
-      .attr \y, -> it.y0
-      .attr \width, -> it.x1 - it.x0
-      .attr \height, -> it.y1 - it.y0
-      .attr \fill, ~> tint.get.apply tint, get-fill(it)
-      .style \opacity, 1
-
-    sel = @g.view.selectAll \g.label .data(@nodes, -> it.data._idx)
-      ..exit!
-        .attr \class, 'label data exit'
-        .transition(\remove-label)duration 275
-        .style \opacity, 0
-        .remove!
-      ..enter!append \g
-        .attr \class, 'label data enter'
-        .attr \transform, (d,i) -> "translate(#{d.x0},#{d.y0})"
-        .style \opacity, 0
-        .style \pointer-events, \none
-        .style \cursor, \pointer
-        .style \font-size, (cfg.font.size or \0.9em)
-
-    sel.interrupt \remove-label .attr \class, "label data enter"
-    @g.view.selectAll \g.label.data.enter
-      .each (d,i) ->
-        text-renderer.style.width = "#{d.x1 - d.x0}px"
-        text-renderer.style.fontSize = cfg.font.size or \0.9em
-
-        area = if isNaN(d.data.area) => '-' else fmt d.data.area
-        text-renderer.innerHTML = """
-        <div>#{d.data.name or ''}</div>
-        <div>#{area}#{unit.inner}</div>
-        """
-        ret = wrap-svg-text node: text-renderer, useRange: true
-        @textContent = ''
-        @appendChild ret
-      .attr \transform, (d,i) ->
-        # text contains offset from width change which can't easily be applied with transition
-        # thus we calculate the difference of width and cancel it directly in translate
-        dx = (@ox or 0) + ((@ow or 0) - (d.x1 - d.x0))
-        "translate(#{dx}, #{@oy or 0})"
-      .transition(\label-update).duration 350
-      .attr \transform, (d,i) ->
-        "translate(#{d.x0},#{d.y0})"
-      .attr \fill, ~> tint.text.apply tint, get-fill(it)
-      .style \opacity, (d,i) ->
-        box = @getBBox!
-        return if box.width > (d.x1 - d.x0) - 5 or box.height > (d.y1 - d.y0 - 5) => 0 else 1
-      .each (d,i) -> @ <<< ox: d.x0, oy: d.y0, ow: d.x1 - d.x0
+    lj = join root: @g.view, tag: \g, cls: \label, data: @nodes, key: key
+    lj.exit.map (n) ->
+      n.setAttribute \class, 'label data exit'
+      tween n, {"style:opacity": 0}, {duration: 275, remove: true}
+    lj.enter.map (n) ->
+      d = n.__data__
+      n.setAttribute \class, 'label data enter'
+      n.setAttribute \transform, "translate(#{d.x0},#{d.y0})"
+      n.style <<< opacity: 0, pointer-events: \none, cursor: \pointer, font-size: (cfg.font.size or \0.9em)
+    lj.update.map (n) ~> @anim.interrupt n
+    lj.nodes.map (n) -> n.setAttribute \class, 'label data enter'
+    # 依 DOM 順序處理 ( 同 d3 的 selectAll ), text-renderer 最後留下的內容才一致
+    Array.from(@g.view.querySelectorAll ':scope > g.label.enter').map (n) ->
+      d = n.__data__
+      text-renderer.style.width = "#{d.x1 - d.x0}px"
+      text-renderer.style.fontSize = cfg.font.size or \0.9em
+      area = if isNaN(d.data.area) => '-' else fmt d.data.area
+      text-renderer.innerHTML = """
+      <div>#{d.data.name or ''}</div>
+      <div>#{area}#{unit.inner}</div>
+      """
+      ret = wrap-svg-text node: text-renderer, useRange: true
+      n.textContent = ''
+      n.appendChild ret
+      # text contains offset from width change which can't easily be applied with transition
+      # thus we calculate the difference of width and cancel it directly in translate
+      dx = (n.ox or 0) + ((n.ow or 0) - (d.x1 - d.x0))
+      n.setAttribute \transform, "translate(#{dx}, #{n.oy or 0})"
+      box = n.getBBox!
+      tween n, do
+        transform: "translate(#{d.x0},#{d.y0})"
+        fill: tint.text.apply tint, get-fill(d)
+        "style:opacity": if box.width > (d.x1 - d.x0) - 5 or box.height > (d.y1 - d.y0 - 5) => 0 else 1
+      n <<< ox: d.x0, oy: d.y0, ow: d.x1 - d.x0
 
     @legend.render!
