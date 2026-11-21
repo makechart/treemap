@@ -35,9 +35,9 @@ mod = ({root, context, t}) ->
     legend: \legend
     label: \label
   }) <<< do
-    unit: position: type: \choice, values: <[inner outside none]>
+    unit: position: type: \choice, values: <[inner outside none]>, desc: {en: "where the unit of the area value goes: inner appends it to the value in each block, outside shows it once as a separate line, none hides it", "zh-TW": "面積數值的單位放哪：inner 接在每個區塊的數值後，outside 在圖外另外標一次，none 不顯示"}
     zoom:
-      enabled: type: \boolean, default: false
+      enabled: type: \boolean, default: false, desc: {en: "click a block to zoom into its category, double-click to go back to the top level", "zh-TW": "點區塊放大到它所屬的分類，雙擊回到最上層"}
   dimension:
     color: {type: \RC, name: "顏色", priority: 4}
     area: {type: \R, name: "面積", priority: 1}
